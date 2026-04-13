@@ -570,9 +570,13 @@ function ProductModal({ product, onSave, onClose }) {
               ))}
             </div>
           </div>
-          <div className="form-group full">
+          <div className="form-group">
             <label className="form-label">Product Name *</label>
             <input className="form-input" value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Organic Apples" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">SKU (optional)</label>
+            <input className="form-input" value={form.sku || ''} onChange={e => set("sku", e.target.value)} placeholder="PROD-001" />
           </div>
           <div className="form-group">
             <label className="form-label">Category</label>
@@ -990,11 +994,39 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [adminTab, setAdminTab] = useState("products");
+  const [suppliers, setSuppliers] = useState([]);
+  const [lowStockProducts, setLowStockProducts] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
+  
+  // Load admin data
+  useEffect(() => {
+    if (user?.role === 'admin') {
+      loadSuppliers();
+      loadLowStock();
+    }
+  }, [user]);
 
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const loadSuppliers = async () => {
+    try {
+      const response = await axiosInstance.get('/suppliers/');
+      setSuppliers(response.data);
+    } catch (err) {
+      console.error('Suppliers load failed');
+    }
+  };
+
+  const loadLowStock = async () => {
+    try {
+      const response = await axiosInstance.get('/products/low_stock/');
+      setLowStockProducts(response.data);
+    } catch (err) {
+      console.error('Low stock load failed');
+    }
   };
 
   // Load products on mount
@@ -1041,9 +1073,11 @@ export default function App() {
             <div className="header-logo">
               <span>🛒</span> FreshCart
             </div>
-            {user.role === "admin" && (
+{user.role === "admin" && (
               <div className="header-nav">
-                <button className={`nav-btn ${adminTab==="products"?"active":""}`} onClick={() => setAdminTab("products")}>📋 Products</button>
+                <button className={`nav-btn ${adminTab==="products"?"active":""}`} onClick={() => setAdminTab("products")}>📦 Products</button>
+                <button className={`nav-btn ${adminTab==="inventory"?"active":""}`} onClick={() => setAdminTab("inventory")}>📋 Inventory</button>
+                <button className={`nav-btn ${adminTab==="reports"?"active":""}`} onClick={() => setAdminTab("reports")}>📊 Reports</button>
               </div>
             )}
             <div className="header-right">
