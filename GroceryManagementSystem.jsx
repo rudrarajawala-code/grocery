@@ -1,7 +1,22 @@
 import { useState, useEffect, useRef } from "react";
+import axios from 'axios';
 
-// ─── MOCK DATA ───────────────────────────────────────────────────────────────
-const MOCK_PRODUCTS = [
+// ─── API CONFIG ───────────────────────────────────────────────────────────────
+const API_BASE = 'http://localhost:8000/api/';
+const axiosInstance = axios.create({
+  baseURL: API_BASE,
+  timeout: 10000,
+  headers: { 'Content-Type': 'application/json' }
+});
+
+// ─── JWT AUTH INTERCEPTOR ─────────────────────────────────────────────────────
+let token = localStorage.getItem('jwt_token');
+axiosInstance.interceptors.request.use(config => {
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
   { id: 1, name: "Organic Apples", category: "Fruits", price: 120, stock: 50, unit: "kg", image: "🍎", description: "Fresh organic apples from Himachal Pradesh" },
   { id: 2, name: "Basmati Rice", category: "Grains", price: 85, stock: 200, unit: "kg", image: "🌾", description: "Premium aged basmati rice" },
   { id: 3, name: "Whole Milk", category: "Dairy", price: 60, stock: 30, unit: "L", image: "🥛", description: "Farm fresh whole milk" },
@@ -12,10 +27,7 @@ const MOCK_PRODUCTS = [
   { id: 8, name: "Cheddar Cheese", category: "Dairy", price: 320, stock: 15, unit: "250g", image: "🧀", description: "Aged cheddar cheese block" },
 ];
 
-const USERS_DB = [
-  { id: 1, email: "admin@grocery.com", password: "admin123", role: "admin", name: "Admin User" },
-  { id: 2, email: "user@grocery.com", password: "user123", role: "user", name: "Raj Kumar" },
-];
+// USERS_DB removed - using Django API login
 
 // Helper: extract a display name from any email like "john.doe@gmail.com" → "John Doe"
 const nameFromEmail = (email) => {
@@ -473,20 +485,26 @@ function LoginScreen({ onLogin }) {
 
   const fill = (u) => { setEmail(u.email); setPass(u.password); };
 
-  const submit = () => {
+  const submit = async () => {
     if (!email || !pass) return setError("Please enter both email and password.");
     if (!email.includes("@")) return setError("Please enter a valid email address.");
     if (pass.length < 3) return setError("Password must be at least 3 characters.");
 
-    // Check known demo accounts first
-    const known = USERS_DB.find(u => u.email === email && u.password === pass);
-    if (known) return onLogin(known);
-
-    // Any random email/password works — if "admin" in email → admin role, else user
-    const role = email.toLowerCase().includes("admin") ? "admin" : "user";
-    const localPart = email.split("@")[0];
-    const name = localPart.split(/[._-]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-    onLogin({ id: Date.now(), email, role, name });
+    try {
+      setError('');
+      const response = await axiosInstance.post('/token/', { username: email, password: pass });
+      const { access: jwt_token } = response.data;
+      localStorage.setItem('jwt_token', jwt_token);
+      
+      // Get user info
+  const userResponse = await axiosInstance.get('/users/');
+      const user = userResponse.data;
+      
+      token = jwt_token; // Update global token
+      onLogin(user);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Login failed. Try again.');
+    }
   };
 
   return (
@@ -742,6 +760,29 @@ function UserShop({ products, user, showToast }) {
   const [orderModal, setOrderModal] = useState(false);
   const [orders, setOrders] = useState([]);
   const [view, setView] = useState("shop"); // "shop" | "orders"
+  
+  const loadCart = async () => {
+    try {
+      const response = await axiosInstance.get('/cart/');
+      setCart(response.data);
+    } catch (err) {
+      console.error('Cart load failed');
+    }
+  };
+  
+  const loadOrders = async () => {
+    try {
+      const response = await axiosInstance.get('/orders/');
+      setOrders(response.data);
+    } catch (err) {
+      console.error('Orders load failed');
+    }
+  };
+
+  useEffect(() => {
+    loadCart();
+    loadOrders();
+  }, [user]);
 
   const filtered = products.filter(p => {
     const matchCat = category === "All" || p.category === category;
@@ -749,13 +790,15 @@ function UserShop({ products, user, showToast }) {
     return matchCat && matchSearch;
   });
 
-  const addToCart = (product) => {
-    setCart(c => {
-      const existing = c.find(i => i.id === product.id);
-      if (existing) return c.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i);
-      return [...c, { ...product, qty: 1 }];
-    });
-    showToast(`${product.image} ${product.name} added to cart`);
+const addToCart = async (product) => {
+    try {
+      await axiosInstance.post('/cart/add/', { product_id: product.id, quantity: 1 });
+      showToast(`${product.image} ${product.name} added to cart`);
+      // Refresh cart
+      loadCart();
+    } catch (err) {
+      showToast('Failed to add to cart');
+    }
   };
 
   const updateQty = (id, delta) => {
@@ -765,17 +808,29 @@ function UserShop({ products, user, showToast }) {
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
-  const placeOrder = () => {
-    const order = { id: Date.now(), items: [...cart], total, date: new Date().toLocaleDateString(), status: "Confirmed" };
-    setOrders(prev => [order, ...prev]);
-    setOrderModal(true);
+  const placeOrder = async () => {
+    try {
+      const itemsData = cart.map(item => ({
+        product_id: item.product.id,
+        quantity: item.quantity,
+        price: item.product.price
+      }));
+      
+      const response = await axiosInstance.post('/orders/', { items: itemsData });
+      setOrders(prev => [response.data, ...prev]);
+      setOrderModal(true);
+      loadCart(); // Clear cart
+      showToast("Order placed successfully!");
+    } catch (err) {
+      showToast('Order failed - check stock');
+    }
   };
 
   const confirmOrder = () => {
     setCart([]);
     setOrderModal(false);
     setCartOpen(false);
-    showToast("Order placed! 🎉");
+    showToast("Order confirmed! 🎉");
   };
 
   return (
@@ -931,7 +986,8 @@ function UserShop({ products, user, showToast }) {
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
-  const [products, setProducts] = useState(MOCK_PRODUCTS);
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [adminTab, setAdminTab] = useState("products");
   const [cartOpen, setCartOpen] = useState(false);
@@ -940,6 +996,39 @@ export default function App() {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
+
+  // Load products on mount
+  useEffect(() => {
+    const loadProducts = async () => {
+      try {
+        const response = await axiosInstance.get('/products/');
+        setProducts(response.data);
+      } catch (err) {
+        console.error('Failed to load products:', err);
+        showToast('Failed to load products');
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadProducts();
+  }, []);
+
+  // Check auth on mount
+  useEffect(() => {
+    const token = localStorage.getItem('jwt_token');
+    if (token) {
+      // Verify token and get user
+      axiosInstance.get('/users/').then(response => {
+        setUser(response.data[0]); // First user or adjust
+      }).catch(() => {
+        localStorage.removeItem('jwt_token');
+      });
+    }
+  }, []);
+
+  if (loading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Loading products...</div>;
+  }
 
   return (
     <>

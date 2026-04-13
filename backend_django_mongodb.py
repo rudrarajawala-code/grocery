@@ -204,7 +204,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'])
     def low_stock(self, request):
-"""Admin-only: Products needing reorder"""
+        """Admin-only: Products needing reorder"""
         low_stock_products = Product.objects.filter(
             stock__lte=models.F('reorder_level')
         )
@@ -287,11 +287,12 @@ class SupplierViewSet(viewsets.ModelViewSet):
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = UserSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        return CustomUser.objects.all().values('id', 'username', 'email', 'role', 
-            'phone', 'loyalty_points', 'employee_id')
+        if self.request.user.role == 'admin':
+            return CustomUser.objects.all()
+        return CustomUser.objects.filter(id=self.request.user.id)
 
 
 class ReportViewSet(viewsets.ViewSet):

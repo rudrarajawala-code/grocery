@@ -10,9 +10,10 @@ Current Working Directory: /Users/rudrarajwala/Desktop/grocery-app
 - [x] **Step 1.4**: Test backend API (provide curl commands)
 
 ### Phase 2: Frontend API Integration (GroceryManagementSystem.jsx)
-- [ ] **Step 2.1**: Replace mocks with API calls (products, login, cart, orders)
-- [ ] **Step 2.2**: Fix authentication (JWT tokens)
-- [ ] **Step 2.3**: Test core flows
+- [x] **Step 2.1**: Install deps & API setup (axios/JWT)
+- [x] **Step 2.2**: Connect products/login to Django API
+- [x] **Step 2.3**: Connect cart/orders
+- [ ] **Step 2.4**: Test full flow
 
 ### Phase 3: New Features UI
 - [ ] **Step 3.1**: Inventory Tracking (suppliers, low-stock, reordering)
