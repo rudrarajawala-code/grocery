@@ -1,3 +1,4 @@
+
 # ============================================================
 #  GROCERY MANAGEMENT SYSTEM — Django + MongoDB Backend
 #  Technology: Django REST Framework + djongo (MongoDB)
@@ -63,9 +64,11 @@ class CustomUser(AbstractUser):
 
 class Product(models.Model):
     name        = models.CharField(max_length=200)
+    sku         = models.CharField(max_length=50, unique=True, blank=True)
     category    = models.CharField(max_length=100)
     price       = models.DecimalField(max_digits=10, decimal_places=2)
     stock       = models.IntegerField(default=0)
+    reorder_level = models.IntegerField(default=10)
     unit        = models.CharField(max_length=50, default='kg')
     image       = models.CharField(max_length=10, default='🥦')   # emoji
     description = models.TextField(blank=True)
@@ -74,6 +77,10 @@ class Product(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def low_stock(self):
+        return self.stock <= self.reorder_level
 
     class Meta:
         ordering = ['-created_at']
@@ -100,6 +107,10 @@ class OrderItem(models.Model):
     product  = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True)
     quantity = models.IntegerField()
     price    = models.DecimalField(max_digits=10, decimal_places=2)  # price at time of order
+    discount = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+
+    def get_subtotal(self):
+        return self.price * self.quantity * (1 - self.discount / 100)
 
     def __str__(self):
         return f"{self.product.name} x {self.quantity}"
@@ -120,6 +131,8 @@ class CartItem(models.Model):
 from rest_framework import serializers
 
 class ProductSerializer(serializers.ModelSerializer):
+    low_stock = serializers.ReadOnlyField()
+    
     class Meta:
         model = Product
         fields = '__all__'
@@ -127,9 +140,14 @@ class ProductSerializer(serializers.ModelSerializer):
 class OrderItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_image = serializers.CharField(source='product.image', read_only=True)
+    subtotal = serializers.SerializerMethodField()
+    
     class Meta:
         model = OrderItem
-        fields = ['id', 'product', 'product_name', 'product_image', 'quantity', 'price']
+        fields = ['id', 'product', 'product_name', 'product_image', 'quantity', 'price', 'discount', 'subtotal']
+    
+    def get_subtotal(self, obj):
+        return obj.get_subtotal()
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
@@ -143,6 +161,25 @@ class CartItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = CartItem
         fields = ['id', 'product', 'quantity']
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'username', 'email', 'role', 'phone', 'loyalty_points', 'employee_id']
+
+class SupplierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Supplier
+        fields = '__all__'
+
+class PaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Payment
+        fields = '__all__'
+
+
+from django.db.models import Sum, Count, Avg
+from django.db import models
 
 
 # ─── grocery/views.py ───────────────────────────────────────
@@ -161,9 +198,18 @@ class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve', 'low_stock']:
             return [permissions.IsAuthenticated()]
         return [IsAdminUser()]            # Only admins can add/edit/delete
+    
+    @action(detail=False, methods=['get'])
+    def low_stock(self, request):
+"""Admin-only: Products needing reorder"""
+        low_stock_products = Product.objects.filter(
+            stock__lte=models.F('reorder_level')
+        )
+        serializer = self.get_serializer(low_stock_products, many=True)
+        return Response(serializer.data)
 
     def get_queryset(self):
         qs = Product.objects.all()
@@ -233,6 +279,52 @@ class CartViewSet(viewsets.ViewSet):
         return Response({'message': 'Removed from cart'})
 
 
+class SupplierViewSet(viewsets.ModelViewSet):
+    queryset = Supplier.objects.all()
+    serializer_class = SupplierSerializer
+    permission_classes = [IsAdminUser]
+
+
+class UserViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = UserSerializer
+    permission_classes = [IsAdminUser]
+    
+    def get_queryset(self):
+        return CustomUser.objects.all().values('id', 'username', 'email', 'role', 
+            'phone', 'loyalty_points', 'employee_id')
+
+
+class ReportViewSet(viewsets.ViewSet):
+    permission_classes = [IsAdminUser]
+    
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        total_sales = Order.objects.aggregate(total=Sum('total'))['total'] or 0
+        total_orders = Order.objects.count()
+        avg_order = Order.objects.aggregate(avg=Avg('total'))['avg'] or 0
+        low_stock_count = Product.objects.filter(stock__lte=models.F('reorder_level')).count()
+        
+        return Response({
+            'total_sales': float(total_sales),
+            'total_orders': total_orders,
+            'avg_order_value': round(float(avg_order), 2),
+            'low_stock_items': low_stock_count,
+        })
+    
+    @action(detail=False, methods=['get'])
+    def inventory_turnover(self, request):
+        # Simplified: total sales qty / avg inventory
+        total_sold = OrderItem.objects.aggregate(sold=Sum('quantity'))['sold'] or 0
+        avg_inventory = Product.objects.aggregate(avg_stock=Avg('stock'))['avg_stock'] or 0
+        turnover = total_sold / avg_inventory if avg_inventory else 0
+        
+        return Response({
+            'total_sold_qty': total_sold,
+            'avg_inventory': round(float(avg_inventory), 0),
+            'turnover_ratio': round(float(turnover), 2)
+        })
+
+
 # ─── grocery/urls.py ────────────────────────────────────────
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -242,6 +334,9 @@ router = DefaultRouter()
 router.register(r'products', ProductViewSet)
 router.register(r'orders',   OrderViewSet, basename='orders')
 router.register(r'cart',     CartViewSet,  basename='cart')
+router.register(r'suppliers', SupplierViewSet)
+router.register(r'users',    UserViewSet, basename='users')
+router.register(r'reports',  ReportViewSet, basename='reports')
 
 urlpatterns = [
     path('api/', include(router.urls)),
