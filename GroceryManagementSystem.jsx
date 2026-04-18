@@ -1085,7 +1085,27 @@ export default function App() {
                 {user.role === "admin" ? "👑 Admin" : "👤 User"}
               </span>
               <div className="avatar" title={user.name}>{user.name[0]}</div>
-              <button className="logout-btn" onClick={() => setUser(null)}>Sign Out</button>
+              <button 
+                className="logout-btn" 
+                onClick={async () => {
+                  try {
+                    // Try API logout if endpoint exists
+                    await axiosInstance.post('/logout/');
+                  } catch (e) {
+                    // Ignore if no logout endpoint
+                  }
+                  // Clear auth data
+                  localStorage.removeItem('jwt_token');
+                  // Reset global token
+                  token = null;
+                  // Reset app state
+                  setUser(null);
+                  setProducts([]);
+                  setToast('Logged out successfully');
+                }}
+              >
+                🚪 Sign Out
+              </button>
             </div>
           </header>
 
