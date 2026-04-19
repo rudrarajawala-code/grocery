@@ -17,6 +17,7 @@ axiosInstance.interceptors.request.use(config => {
   }
   return config;
 });
+const PRODUCTS = [
   { id: 1, name: "Organic Apples", category: "Fruits", price: 120, stock: 50, unit: "kg", image: "🍎", description: "Fresh organic apples from Himachal Pradesh" },
   { id: 2, name: "Basmati Rice", category: "Grains", price: 85, stock: 200, unit: "kg", image: "🌾", description: "Premium aged basmati rice" },
   { id: 3, name: "Whole Milk", category: "Dairy", price: 60, stock: 30, unit: "L", image: "🥛", description: "Farm fresh whole milk" },
@@ -24,7 +25,7 @@ axiosInstance.interceptors.request.use(config => {
   { id: 5, name: "Almonds", category: "Nuts", price: 650, stock: 25, unit: "kg", image: "🌰", description: "California almonds premium grade" },
   { id: 6, name: "Spinach", category: "Vegetables", price: 30, stock: 60, unit: "bunch", image: "🥬", description: "Fresh farm spinach" },
   { id: 7, name: "Bananas", category: "Fruits", price: 50, stock: 100, unit: "dozen", image: "🍌", description: "Ripe yellow bananas" },
-  { id: 8, name: "Cheddar Cheese", category: "Dairy", price: 320, stock: 15, unit: "250g", image: "🧀", description: "Aged cheddar cheese block" },
+  { id: 8, name: "Cheddar Cheese", category: "Dairy", price: 320, stock: 15, unit: "250g", image: "🧀", description: "Aged cheddar cheese block" }
 ];
 
 // USERS_DB removed - using Django API login
@@ -497,11 +498,11 @@ function LoginScreen({ onLogin }) {
       localStorage.setItem('jwt_token', jwt_token);
       
       // Get user info
-  const userResponse = await axiosInstance.get('/users/');
-      const user = userResponse.data;
+      const userResponse = await axiosInstance.get('/users/');
+      const userData = Array.isArray(userResponse.data) ? userResponse.data[0] : userResponse.data;
       
       token = jwt_token; // Update global token
-      onLogin(user);
+      onLogin(userData);
     } catch (err) {
       setError(err.response?.data?.detail || 'Login failed. Try again.');
     }
@@ -518,11 +519,12 @@ function LoginScreen({ onLogin }) {
 
         <p style={{ textAlign:"center", fontSize:12, color:"#999", marginBottom:8 }}>Login with any email & password, or use demo accounts:</p>
         <div className="demo-chips">
-          {USERS_DB.map(u => (
-            <div key={u.id} className="demo-chip" onClick={() => fill(u)}>
-              {u.role === "admin" ? "👑" : "👤"} {u.role}
-            </div>
-          ))}
+          <div className="demo-chip" onClick={() => fill({email: "admin@freshcart.com", password: "admin123"})}>
+            👑 Admin Demo
+          </div>
+          <div className="demo-chip" onClick={() => fill({email: "user@freshcart.com", password: "user123"})}>
+            👤 User Demo
+          </div>
         </div>
 
         {error && <div className="error-msg">⚠️ {error}</div>}
@@ -1051,7 +1053,8 @@ export default function App() {
     if (token) {
       // Verify token and get user
       axiosInstance.get('/users/').then(response => {
-        setUser(response.data[0]); // First user or adjust
+        const userData = Array.isArray(response.data) ? response.data[0] : response.data;
+        setUser(userData);
       }).catch(() => {
         localStorage.removeItem('jwt_token');
       });
@@ -1087,7 +1090,7 @@ export default function App() {
               <div className="avatar" title={user.name}>{user.name[0]}</div>
               <button 
                 className="logout-btn" 
-                onClick={async () => {
+              onClick={async () => {
                   try {
                     // Try API logout if endpoint exists
                     await axiosInstance.post('/logout/');
@@ -1098,10 +1101,9 @@ export default function App() {
                   localStorage.removeItem('jwt_token');
                   // Reset global token
                   token = null;
-                  // Reset app state
+                  // Reset app state - KEEP PRODUCTS
                   setUser(null);
-                  setProducts([]);
-                  setToast('Logged out successfully');
+                  setToast('Logged out successfully ✅');
                 }}
               >
                 🚪 Sign Out
